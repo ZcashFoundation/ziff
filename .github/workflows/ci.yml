@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: shellcheck + syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # shellcheck is preinstalled on ubuntu-latest runners.
+      - name: shellcheck
+        run: shellcheck -S warning ziff tests/run.sh
+      - name: bash syntax
+        run: |
+          bash -n ziff
+          bash -n tests/run.sh
+
+  test:
+    name: integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # cargo-public-api builds rustdoc JSON, which needs a nightly toolchain.
+      - name: Install Rust (stable + nightly)
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup toolchain install nightly --profile minimal --no-self-update
+          rustup default stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-public-api
+        run: cargo install cargo-public-api --locked
+      # jq is preinstalled on ubuntu-latest runners.
+      - name: Run integration tests
+        run: tests/run.sh

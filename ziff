@@ -2043,6 +2043,11 @@ function group_key(s,   p, isdecl) {
 }
 function qual_path(s,   p) {
     gsub(/^#\[[^]]*\] +/, "", s)
+    # Drop an impl block leading generic params (a lifetime/type parameter list
+    # right after `impl`) so a parameterised impl is still recognised here as an
+    # impl; group_key strips all generics first so it already is, and without this
+    # qual_path would collapse such a line to a stray `impl` member.
+    sub(/^impl *<[^<>]*>/, "impl", s)
     if (s ~ /^impl /) { if (crate_prefix != "") gsub(crate_prefix "::", "", s); return s }
     sub(/^pub +/, "", s)
     sub(/^(const +|async +|unsafe +)*/, "", s); sub(/^(fn|static|type|use|mod|struct|enum|trait|union) +/, "", s)
@@ -2069,6 +2074,17 @@ function relsig(s) {
     sub(/^pub +/, "", s)
     if (crate_prefix != "") gsub(crate_prefix "::", "", s)
     return s
+}
+# proptest `Arbitrary` machinery, dragged in by --all-features (the proptest-impl
+# feature) and never changelog-worthy. Matches the impl line, the `Parameters`/
+# `Strategy` associated types, the `arbitrary`/`arbitrary_with` methods, and any
+# line that names a `proptest::` path (the larger generated Strategy/Parameters).
+function is_proptest(s) {
+    if (s ~ /proptest::/) return 1
+    if (s ~ /^impl[ <].*Arbitrary.* for /) return 1
+    if (s ~ /^(pub +)?type [^=]*::(Parameters|Strategy) =/) return 1
+    if (s ~ /::(arbitrary|arbitrary_with)\(/) return 1
+    return 0
 }
 # Impl-group key "impl <Trait> for <Self>" for item s, or "" if s is not a
 # trait-impl member/header. Sets G_ISHEADER=1 when s is the impl line itself.
@@ -2105,7 +2121,7 @@ END {
     if (mode == "changed") {
         for (i = 1; i <= n; i++) {
             line = buf[i]
-            if (line ~ /^  - /) { skip = (line ~ /proptest::/); sub(/^  - /, "", line); pend = relsig(line); continue }
+            if (line ~ /^  - /) { skip = is_proptest(line); sub(/^  - /, "", line); pend = relsig(line); continue }
             if (line ~ /^  \+ /) {
                 if (skip) { skip = 0; continue }        # proptest Arbitrary machinery (test-only)
                 sub(/^  \+ /, "", line); nw = relsig(line)
@@ -2118,8 +2134,8 @@ END {
     } else {
         for (i = 1; i <= n; i++) {
             s = buf[i]
-            if (s ~ /^impl / && s !~ / for /) continue  # inherent impl block header, not an item
-            if (s ~ /proptest::/) continue              # proptest Arbitrary machinery (test-only)
+            if (s ~ /^impl[ <]/ && s !~ / for /) continue  # inherent impl block header, not an item
+            if (is_proptest(s)) continue                   # proptest Arbitrary machinery (test-only)
             gk0 = group_key(s); qp = qual_path(s)
             if ((gk0 SUBSEP qp) in seenitem) continue   # cargo-public-api dupes some impls
             seenitem[gk0 SUBSEP qp] = 1

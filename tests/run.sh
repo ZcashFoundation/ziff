@@ -358,6 +358,20 @@ out=$( cd "$repo" && "$ZIFF" --changelog "$base" "$head" 2>/dev/null )
 assert_contains "$out" "- \`impl T for S\`:" "--changelog: removed impl method grouped under its impl (base map)"
 rm -rf "$repo"
 
+# 6q) An impl with its own generic/lifetime params (`impl<'a> ... for ...`) is
+#     recognized as an impl, not collapsed to a stray `impl` member — qual_path
+#     must drop the impl's leading param list like group_key does.
+repo=$(new_repo 'pub struct Foo;')
+base=$(git -C "$repo" rev-parse HEAD)
+head=$(commit_lib "$repo" $'pub struct Foo;\nimpl<\'a> From<&\'a u8> for Foo { fn from(_: &\'a u8) -> Self { Foo } }' 'add lifetime-param impl')
+out=$( cd "$repo" && "$ZIFF" --changelog "$base" "$head" 2>/dev/null )
+assert_contains "$out" "impl From" "--changelog: impl<'a> recognized as an impl"
+case "$out" in
+*'::impl`'* | *'- `impl`'*) bad "--changelog: impl<'a> must not collapse to a stray 'impl' member" ;;
+*) ok "--changelog: no stray 'impl' member from impl<'a>" ;;
+esac
+rm -rf "$repo"
+
 # 6k) A `const fn` must keep its name, not collapse to a stray `fn` group (the
 #     keyword strip has to consume the `const`/`async`/`unsafe` qualifier *and*
 #     the `fn`).

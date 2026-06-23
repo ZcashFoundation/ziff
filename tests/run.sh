@@ -110,14 +110,21 @@ repo=$(new_repo 'pub fn placeholder() {}')
 base=$(git -C "$repo" rev-parse HEAD)
 head=$(commit_lib "$repo" $'pub fn placeholder() {}\npub struct Widget;\nimpl Widget {\n    pub fn new() -> Self { Widget }\n    pub fn run(&self) {}\n}' 'add Widget type')
 out=$( cd "$repo" && "$ZIFF" "$base" "$head" 2>&1 )
-if printf '%s\n' "$out" | grep -qE '^ +ziff_fixture::Widget$'; then
-    ok "grouping: type header present by default"
+if printf '%s\n' "$out" | grep -qE '^ +ziff_fixture::Widget +\(struct\)$'; then
+    ok "grouping: header has type path + kind tag"
 else
-    bad "grouping: expected a bare 'ziff_fixture::Widget' group header"
+    bad "grouping: expected 'ziff_fixture::Widget  (struct)' header"
+fi
+assert_contains "$out" "+ pub struct Widget" "grouping: item shown prefix-elided"
+if printf '%s\n' "$out" | grep -qF '+ pub struct ziff_fixture::Widget'; then
+    bad "grouping: item should not repeat the full module path"
+else
+    ok "grouping: shared module prefix elided from item"
 fi
 flat=$( cd "$repo" && "$ZIFF" --flat "$base" "$head" 2>&1 )
-if printf '%s\n' "$flat" | grep -qE '^ +ziff_fixture::Widget$'; then
-    bad "--flat: should not emit a bare group header"
+assert_contains "$flat" "pub struct ziff_fixture::Widget" "--flat: keeps fully-qualified paths"
+if printf '%s\n' "$flat" | grep -qE '^ +ziff_fixture::Widget +\(struct\)$'; then
+    bad "--flat: should not emit a group header"
 else
     ok "--flat: no group header"
 fi

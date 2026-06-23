@@ -53,11 +53,12 @@
 #   -h, --help       Print this help message and exit.
 #   --with-lock      Also diff Cargo.lock for transitive dep changes.
 #   --flat           Don't group the per-crate API items. By default, items in
-#                    each Removed/Changed/Added list are clustered under a
-#                    dim header for the type or module that owns them (a type
-#                    declaration heads its own group alongside its methods,
-#                    fields, variants, and impls). --flat prints the original
-#                    one-item-per-line list instead.
+#                    each Removed/Changed/Added list are clustered under a dim
+#                    header naming the type or module that owns them, tagged
+#                    with its kind (e.g. `(struct)`), and the shared path prefix
+#                    is elided from each item. A type declaration heads its own
+#                    group alongside its methods, fields, variants, and impls.
+#                    --flat prints the original flat, fully-qualified list.
 #   --fetch[=<remote>]
 #                    Fetch the baseline branch from <remote> before comparing,
 #                    so a stale local `main` can't skew the diff (e.g. when
@@ -1673,13 +1674,45 @@ function group_key(s,   p, isdecl) {
     if (!isdecl && p ~ /::/) sub(/::[^:]+$/, "", p)
     return p
 }
+# Declaration kind for a header tag: the keyword if the line declares its group
+# (a mod/struct/enum/trait/union), else empty.
+function decl_kind(s,   t) {
+    gsub(/^#\[[^]]*\] +/, "", s)
+    if (s ~ /^pub (mod|struct|enum|trait|union) /) {
+        sub(/^pub +/, "", s); t = s; sub(/ .*/, "", t); return t
+    }
+    return ""
+}
 /^[[:space:]]*$/ { next }
-{
-    if (mode == "changed") {
-        if ($0 ~ /^  - /) { sig = $0; sub(/^  - /, "", sig); curkey = group_key(sig) }
-        print curkey "\t" $0
-    } else {
-        print group_key($0) "\t" $0
+{ buf[++n] = $0 }
+END {
+    # Pass 1: assign each line a group key, and record a group kind from any
+    # declaration line. In changed mode the key comes from the `- old` line and
+    # carries to the following `+ new` line.
+    for (i = 1; i <= n; i++) {
+        s = buf[i]
+        if (mode == "changed") {
+            if (s ~ /^  - /) { sig = s; sub(/^  - /, "", sig); ckey = group_key(sig); dk = decl_kind(sig) }
+            else dk = ""
+            gk[i] = ckey
+        } else {
+            gk[i] = group_key(s)
+            dk = decl_kind(s)
+        }
+        if (dk != "") gkind[gk[i]] = dk
+    }
+    # Pass 2: emit header records (key + kind) and item records, eliding the
+    # shared module prefix (the key minus its last segment) from each item.
+    first = 1; prev = ""; mp = ""
+    for (i = 1; i <= n; i++) {
+        if (first || gk[i] != prev) {
+            print "H\t" gk[i] "\t" gkind[gk[i]]
+            prev = gk[i]; first = 0
+            mp = gk[i]; sub(/::[^:]*$/, "", mp)
+        }
+        disp = buf[i]
+        if (mp != "") gsub(mp "::", "", disp)
+        print "I\t" disp
     }
 }'
 
@@ -1707,23 +1740,30 @@ render_items() {
         return
     fi
 
-    local prev="" key line
-    while IFS=$'\t' read -r key line; do
-        [ -z "$line" ] && continue
-        if [ "$key" != "$prev" ]; then
-            [ -n "$prev" ] && echo ""
-            echo "    ${DIM}${key:-(other)}${RESET}"
-            prev="$key"
-        fi
-        case "$kind" in
-        removed) echo "      ${RED}- ${line}${RESET}" ;;
-        added) echo "      ${GREEN}+ ${line}${RESET}" ;;
-        changed)
-            case "$line" in
-            "  - "*) echo "      ${RED}${line#  }${RESET}" ;;
-            "  + "*) echo "      ${GREEN}${line#  }${RESET}" ;;
-            *) echo "      $line" ;;
-            esac ;;
+    local first=1 rec a b
+    while IFS=$'\t' read -r rec a b; do
+        case "$rec" in
+        H)
+            [ "$first" = 0 ] && echo ""
+            first=0
+            if [ -n "$b" ]; then
+                echo "    ${DIM}${a:-(other)}  (${b})${RESET}"
+            else
+                echo "    ${DIM}${a:-(other)}${RESET}"
+            fi
+            ;;
+        I)
+            case "$kind" in
+            removed) echo "      ${RED}- ${a}${RESET}" ;;
+            added) echo "      ${GREEN}+ ${a}${RESET}" ;;
+            changed)
+                case "$a" in
+                "  - "*) echo "      ${RED}${a#  }${RESET}" ;;
+                "  + "*) echo "      ${GREEN}${a#  }${RESET}" ;;
+                *) echo "      $a" ;;
+                esac ;;
+            esac
+            ;;
         esac
     done < <(printf '%s' "$buffer" | awk -v mode="$mode" "$GROUP_AWK")
 }

@@ -186,6 +186,55 @@ else
 fi
 rm -rf "$repo"
 
+# 6g) External-type bucketing: items whose path is in another crate (a trait
+#     impl this crate adds to a foreign type) get a dedicated section.
+ws=$(mktemp -d)
+mkdir -p "$ws/dep/src" "$ws/ziff_fixture/src"
+printf '/target\n' >"$ws/.gitignore"
+cat >"$ws/Cargo.toml" <<'EOF'
+[workspace]
+members = ["dep", "ziff_fixture"]
+resolver = "2"
+EOF
+cat >"$ws/dep/Cargo.toml" <<'EOF'
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2021"
+EOF
+echo 'pub struct Foo;' >"$ws/dep/src/lib.rs"
+cat >"$ws/ziff_fixture/Cargo.toml" <<'EOF'
+[package]
+name = "ziff_fixture"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dep = { path = "../dep" }
+EOF
+printf 'pub trait Ext { fn tag(&self) -> u8; }\nimpl Ext for dep::Foo { fn tag(&self) -> u8 { 0 } }\n' >"$ws/ziff_fixture/src/lib.rs"
+git -C "$ws" init -q
+git -C "$ws" config user.email t@t
+git -C "$ws" config user.name t
+( cd "$ws" && cargo generate-lockfile -q ) >/dev/null 2>&1
+git -C "$ws" add -A
+git -C "$ws" commit -qm base
+base=$(git -C "$ws" rev-parse HEAD)
+printf 'pub trait Ext { fn tag(&self) -> u8; fn name(&self) -> u8; }\nimpl Ext for dep::Foo { fn tag(&self) -> u8 { 0 } fn name(&self) -> u8 { 1 } }\n' >"$ws/ziff_fixture/src/lib.rs"
+git -C "$ws" add -A
+git -C "$ws" commit -qm head
+head=$(git -C "$ws" rev-parse HEAD)
+out=$( cd "$ws" && "$ZIFF" "$base" "$head" 2>&1 )
+assert_contains "$out" "[trait impls on external types]" "external: foreign-type items get a dedicated section"
+# The foreign item is bucketed under its real crate (`dep`), not as a module of
+# the analyzed crate.
+if printf '%s\n' "$out" | grep -qE '^ +dep$'; then
+    ok "external: foreign item bucketed under its own crate path"
+else
+    bad "external: expected a 'dep' module header under the external section"
+fi
+rm -rf "$ws"
+
 echo ""
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]

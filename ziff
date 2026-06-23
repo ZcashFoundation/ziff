@@ -62,6 +62,9 @@
 #                    a module (free fns, consts, mod decls) sit under the module
 #                    header. --by-type uses a flat type grouping instead: one
 #                    tagged header per type, members keeping their `Type::` prefix.
+#                    In either mode, items whose path is in another crate (a
+#                    trait impl this crate adds to a foreign type) are collected
+#                    under a separate "trait impls on external types" section.
 #   --flat           Don't group at all; print the original flat,
 #                    fully-qualified, one-item-per-line list.
 #   --fetch[=<remote>]
@@ -1726,6 +1729,50 @@ function kind_of(t,   name) {
     if (t in tkindw) return tkindw[t]
     return fallback_kind(t)
 }
+# A key is "external" when its path is in a different crate than the one being
+# analyzed — a trait impl this crate adds to a foreign type. Such items are
+# bucketed separately so they are not mistaken for modules of this crate
+# (cargo-public-api names them by the Self type path, not the impl location).
+function is_ext(k) {
+    return (crate_prefix != "" && k !~ ("^" crate_prefix "(::|$)"))
+}
+# Emit one type group (flat --by-type mode): header + members elided of the
+# type module prefix.
+function emit_type(t,   k, mp, disp) {
+    print "H\t" t "\t" kind_of(t)
+    mp = t; sub(/::[^:]*$/, "", mp)
+    for (k = 1; k <= mcnt[t]; k++) {
+        disp = buf[members[t, k]]
+        if (mp != "") gsub(mp "::", "", disp)
+        print "I\t" disp
+    }
+}
+# Emit one module group (nested mod mode): module header, then each owning type
+# as a sub-header with members, or module-level items directly.
+function emit_module(m,   ti, t, k, disp, nm) {
+    print "M\t" m
+    for (ti = 1; ti <= tcnt[m]; ti++) {
+        t = tlist[m, ti]
+        if (t == m) {
+            for (k = 1; k <= mcnt[t]; k++) {
+                disp = buf[members[t, k]]
+                gsub(m "::", "", disp)
+                if (disp ~ /^pub mod /) { nm = disp; sub(/.*::/, "", nm); disp = "pub mod " nm }
+                print "I\t" disp
+            }
+        } else {
+            print "T\t" substr(t, length(m) + 3) "\t" kind_of(t)
+            for (k = 1; k <= mcnt[t]; k++) {
+                disp = buf[members[t, k]]
+                # Strip the owning type prefix, tolerating a generic arg list on
+                # it (e.g. `ValueBalance<NonNegative>::Bytes`).
+                gsub(t "(<[^<>]*>)?::", "", disp)
+                gsub(m "::", "", disp)
+                print "J\t" disp
+            }
+        }
+    }
+}
 # Load the type -> kind map produced from `git grep` of the head source.
 BEGIN {
     if (kindsfile != "") {
@@ -1762,57 +1809,35 @@ END {
     # nested type (e.g. an enum and a struct-variant of it) still gets a single
     # header rather than a duplicate. Clusters and their members keep
     # first-appearance order.
+    # Own-crate groups are emitted first; external-type groups (trait impls on
+    # foreign types) are collected after an `X` divider so they read as a
+    # distinct section rather than as modules of this crate.
     if (level == "type") {
-        # Flat: one header per type; members elided of the type module prefix.
+        # Flat: one header per type.
         for (i = 1; i <= n; i++) {
             t = tk[i]
             if (!(t in tseen)) { tseen[t] = 1; torder[++norder] = t }
             members[t, ++mcnt[t]] = i
         }
+        for (o = 1; o <= norder; o++) if (!is_ext(torder[o])) emit_type(torder[o])
+        ex = 0
         for (o = 1; o <= norder; o++) {
             t = torder[o]
-            print "H\t" t "\t" kind_of(t)
-            mp = t; sub(/::[^:]*$/, "", mp)
-            for (k = 1; k <= mcnt[t]; k++) {
-                disp = buf[members[t, k]]
-                if (mp != "") gsub(mp "::", "", disp)
-                print "I\t" disp
-            }
+            if (is_ext(t)) { if (!ex) { print "X"; ex = 1 } emit_type(t) }
         }
     } else {
-        # Nested: module (M) > type sub-header (T) > members (J); items living
-        # directly in the module (free fns, consts, mod decls) are I. Cluster by
-        # module, then by type within each module.
+        # Nested: cluster by module, then by type within each module.
         for (i = 1; i <= n; i++) {
             m = mkey[i]; t = tk[i]
             if (!(m in mseen)) { mseen[m] = 1; modorder[++nmod] = m }
             if (!(t in tseen)) { tseen[t] = 1; tlist[m, ++tcnt[m]] = t }
             members[t, ++mcnt[t]] = i
         }
+        for (mo = 1; mo <= nmod; mo++) if (!is_ext(modorder[mo])) emit_module(modorder[mo])
+        ex = 0
         for (mo = 1; mo <= nmod; mo++) {
             m = modorder[mo]
-            print "M\t" m
-            for (ti = 1; ti <= tcnt[m]; ti++) {
-                t = tlist[m, ti]
-                if (t == m) {
-                    for (k = 1; k <= mcnt[t]; k++) {
-                        disp = buf[members[t, k]]
-                        gsub(m "::", "", disp)
-                        if (disp ~ /^pub mod /) { nm = disp; sub(/.*::/, "", nm); disp = "pub mod " nm }
-                        print "I\t" disp
-                    }
-                } else {
-                    print "T\t" substr(t, length(m) + 3) "\t" kind_of(t)
-                    for (k = 1; k <= mcnt[t]; k++) {
-                        disp = buf[members[t, k]]
-                        # Strip the owning type prefix, tolerating a generic arg
-                        # list on it (e.g. `ValueBalance<NonNegative>::Bytes`).
-                        gsub(t "(<[^<>]*>)?::", "", disp)
-                        gsub(m "::", "", disp)
-                        print "J\t" disp
-                    }
-                }
-            }
+            if (is_ext(m)) { if (!ex) { print "X"; ex = 1 } emit_module(m) }
         }
     }
 }'
@@ -1822,7 +1847,7 @@ END {
 # under their owning type with a kind tag, and `flat` prints the ungrouped,
 # fully-qualified list. Grouped modes elide the shared module prefix.
 render_items() {
-    local buffer=$1 kind=$2 mode=plain
+    local buffer=$1 kind=$2 crate_prefix=$3 mode=plain
     [ "$kind" = changed ] && mode=changed
 
     if [ "$group_mode" = flat ]; then
@@ -1856,6 +1881,10 @@ render_items() {
             [ -n "$prev_rec" ] && echo ""
             echo "    ${DIM}${a:-(other)}${RESET}"
             ;;
+        X)
+            echo ""
+            echo "    ${DIM}[trait impls on external types]${RESET}"
+            ;;
         T)
             { [ -n "$prev_rec" ] && [ "$prev_rec" != M ]; } && echo ""
             echo "      ${DIM}${a}  (${b})${RESET}"
@@ -1882,7 +1911,7 @@ render_items() {
             ;;
         esac
         prev_rec="$rec"
-    done < <(printf '%s' "$buffer" | awk -v mode="$mode" -v level="$group_mode" -v kindsfile="$TYPE_KINDS_FILE" "$GROUP_AWK")
+    done < <(printf '%s' "$buffer" | awk -v mode="$mode" -v level="$group_mode" -v kindsfile="$TYPE_KINDS_FILE" -v crate_prefix="$crate_prefix" "$GROUP_AWK")
 }
 
 # Type -> kind map read from the head source, so a group header can show the
@@ -1918,22 +1947,26 @@ for i in "${!crate_names[@]}"; do
     echo ""
     echo "${BOLD}${crate_names[$i]}${RESET}"
 
+    # The crate's lib path prefix (e.g. zebra-state -> zebra_state) lets the
+    # grouping flag items whose path is in another crate as external.
+    crate_pfx="${crate_names[$i]//-/_}"
+
     if [ "$r" -gt 0 ]; then
         echo ""
         echo "  ${RED}Removed ($r):${RESET}"
-        render_items "${crate_removed_lines[$i]}" removed
+        render_items "${crate_removed_lines[$i]}" removed "$crate_pfx"
     fi
 
     if [ "$c" -gt 0 ]; then
         echo ""
         echo "  ${YELLOW}Changed ($c):${RESET}"
-        render_items "${crate_changed_lines[$i]}" changed
+        render_items "${crate_changed_lines[$i]}" changed "$crate_pfx"
     fi
 
     if [ "$a" -gt 0 ]; then
         echo ""
         echo "  ${GREEN}Added ($a):${RESET}"
-        render_items "${crate_added_lines[$i]}" added
+        render_items "${crate_added_lines[$i]}" added "$crate_pfx"
     fi
 done
 

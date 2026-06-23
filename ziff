@@ -54,9 +54,10 @@
 #   --with-lock      Also diff Cargo.lock for transitive dep changes.
 #   --by-type        By default, per-crate API items are grouped into a
 #                    module > type > member hierarchy: a module header, then a
-#                    type sub-header tagged with its kind (`(struct)`/`(enum)`/…
-#                    when declared in the diff, inferred from members otherwise,
-#                    or a generic `(type)`/`(mod)`), with the module and type
+#                    type sub-header tagged with its kind — read from its
+#                    declaration in the diff, else the head source, else inferred
+#                    from a member, else a generic `(type)`/`(mod)` — with the
+#                    module and type
 #                    prefixes factored out of each item; items living directly in
 #                    a module (free fns, consts, mod decls) sit under the module
 #                    header. --by-type uses a flat type grouping instead: one
@@ -1715,11 +1716,25 @@ function fallback_kind(k,   seg) {
     if (seg ~ /^[A-Z]/) return "type"
     return "mod"
 }
-# Resolved kind for a type key: declared > inferred-from-member > fallback.
-function kind_of(t) {
+# Resolved kind for a type key: declared in the diff > read from the source at
+# the head ref (by short name) > inferred from a member > naming-convention
+# fallback.
+function kind_of(t,   name) {
     if (t in tkind) return tkind[t]
+    name = t; sub(/.*::/, "", name)
+    if (name in srckind) return srckind[name]
     if (t in tkindw) return tkindw[t]
     return fallback_kind(t)
+}
+# Load the type -> kind map produced from `git grep` of the head source.
+BEGIN {
+    if (kindsfile != "") {
+        while ((getline ln < kindsfile) > 0) {
+            ix = index(ln, "\t")
+            if (ix > 0) srckind[substr(ln, 1, ix - 1)] = substr(ln, ix + 1)
+        }
+        close(kindsfile)
+    }
 }
 /^[[:space:]]*$/ { next }
 { buf[++n] = $0 }
@@ -1826,7 +1841,14 @@ render_items() {
             echo "      ${DIM}${a}  (${b})${RESET}"
             ;;
         I | J)
-            [ "$rec" = J ] && ind="        " || ind="      "
+            if [ "$rec" = J ]; then
+                ind="        "
+            else
+                ind="      "
+                # A module-level item after a type sub-group reads as loose at
+                # this shallower indent; separate it with a blank line.
+                case "$prev_rec" in T | J) echo "" ;; esac
+            fi
             case "$kind" in
             removed) echo "${ind}${RED}- ${a}${RESET}" ;;
             added) echo "${ind}${GREEN}+ ${a}${RESET}" ;;
@@ -1840,8 +1862,28 @@ render_items() {
             ;;
         esac
         prev_rec="$rec"
-    done < <(printf '%s' "$buffer" | awk -v mode="$mode" -v level="$group_mode" "$GROUP_AWK")
+    done < <(printf '%s' "$buffer" | awk -v mode="$mode" -v level="$group_mode" -v kindsfile="$TYPE_KINDS_FILE" "$GROUP_AWK")
 }
+
+# Type -> kind map read from the head source, so a group header can show the
+# real kind of a pre-existing type (one whose declaration isn't in the diff).
+# One `git grep` over the head tree; keyed by type short-name. Macro-generated
+# types that don't appear literally in source (e.g. lazy_static structs) simply
+# aren't found here and fall back to the diff/inference/naming-convention kind.
+# Skipped for --flat (no headers) and when grouping found no crates to render.
+TYPE_KINDS_FILE=""
+if [ "$group_mode" != flat ]; then
+    TYPE_KINDS_FILE="$RUN_TMP/type-kinds.tsv"
+    git grep -E '^[[:space:]]*pub (struct|enum|trait|union) ' "$head_sha" -- '*.rs' 2>/dev/null |
+        awk '{
+            for (i = 1; i < NF; i++)
+                if ($i == "struct" || $i == "enum" || $i == "trait" || $i == "union") {
+                    n = $(i + 1); sub(/[<({:;].*/, "", n)
+                    if (n != "") print n "\t" $i
+                    break
+                }
+        }' | sort -u >"$TYPE_KINDS_FILE" 2>/dev/null || : >"$TYPE_KINDS_FILE"
+fi
 
 has_breaking=false
 

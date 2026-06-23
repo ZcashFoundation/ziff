@@ -147,16 +147,17 @@ else
 fi
 rm -rf "$repo"
 
-# 6d) Fallback kind: a pre-existing type with only a method added (no declaration,
-#     variant, or field in the diff) gets a generic (type) sub-header.
-repo=$(new_repo $'pub struct Widget;\nimpl Widget { pub fn a(&self) {} }')
+# 6d) Kind from source: a pre-existing type whose declaration isn't in the diff
+#     (only a method added) gets its real kind read from the head source — here a
+#     trait, which neither the diff nor member inference could determine.
+repo=$(new_repo $'pub trait Speak { fn hello(&self); }')
 base=$(git -C "$repo" rev-parse HEAD)
-head=$(commit_lib "$repo" $'pub struct Widget;\nimpl Widget { pub fn a(&self) {} pub fn b(&self) {} }' 'add method b')
+head=$(commit_lib "$repo" $'pub trait Speak { fn hello(&self); fn bye(&self); }' 'add trait method bye')
 out=$( cd "$repo" && "$ZIFF" "$base" "$head" 2>&1 )
-if printf '%s\n' "$out" | grep -qE '^ +Widget +\(type\)$'; then
-    ok "default: undeclared type gets fallback (type) sub-header"
+if printf '%s\n' "$out" | grep -qE '^ +Speak +\(trait\)$'; then
+    ok "default: pre-existing type kind read from head source (trait)"
 else
-    bad "default: expected a 'Widget  (type)' fallback sub-header"
+    bad "default: expected a 'Speak  (trait)' sub-header from source lookup"
 fi
 rm -rf "$repo"
 

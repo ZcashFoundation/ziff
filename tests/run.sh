@@ -372,6 +372,19 @@ case "$out" in
 esac
 rm -rf "$repo"
 
+# 6r) Boilerplate trait methods implied by the impl (here `from`) are not listed
+#     under the impl header.
+repo=$(new_repo $'pub struct Foo;\npub struct Bar;')
+base=$(git -C "$repo" rev-parse HEAD)
+head=$(commit_lib "$repo" $'pub struct Foo;\npub struct Bar;\nimpl From<Bar> for Foo { fn from(_: Bar) -> Self { Foo } }' 'add From<Bar>')
+out=$( cd "$repo" && "$ZIFF" --changelog "$base" "$head" 2>/dev/null )
+assert_contains "$out" "impl From<Bar> for Foo" "--changelog: From impl is documented"
+case "$out" in
+*'`from`'*) bad "--changelog: a From impl must not list its boilerplate 'from' method" ;;
+*) ok "--changelog: boilerplate 'from' dropped under the impl header" ;;
+esac
+rm -rf "$repo"
+
 # 6k) A `const fn` must keep its name, not collapse to a stray `fn` group (the
 #     keyword strip has to consume the `const`/`async`/`unsafe` qualifier *and*
 #     the `fn`).

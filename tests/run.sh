@@ -161,6 +161,17 @@ else
 fi
 rm -rf "$repo"
 
+# 6e) Clustering: an enum with struct-variants interleaves variant items with
+#     the variants' field items, yet must produce a single enum header (not a
+#     duplicate per run).
+repo=$(new_repo 'pub fn placeholder() {}')
+base=$(git -C "$repo" rev-parse HEAD)
+head=$(commit_lib "$repo" $'pub fn placeholder() {}\npub enum E { A { x: u32 }, B { y: u32 } }' 'add enum with struct-variants')
+out=$( cd "$repo" && "$ZIFF" "$base" "$head" 2>&1 )
+nhdr=$(printf '%s\n' "$out" | grep -cE '^ +E +\(enum\)$')
+assert_eq "$nhdr" "1" "clustering: enum header appears exactly once (no duplicate)"
+rm -rf "$repo"
+
 echo ""
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]

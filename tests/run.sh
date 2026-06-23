@@ -302,6 +302,19 @@ assert_contains "$out" "- \`dep\` dependency bumped to \`0.2.0\`." "--changelog:
 assert_contains "$out" "- \`dep2\` dependency." "--changelog: dropped dep under Removed"
 rm -rf "$ws"
 
+# 6j) --changelog attributes a trait-impl associated item to its `impl Trait for
+#     Self` via the rustdoc trait map, recovering the Self generics from the
+#     signature. Here the `Bytes` assoc type of `impl IntoDisk for Foo<u32>`
+#     changes value, so it lands in ### Changed grouped under the impl header
+#     rather than under a bare `Foo` type.
+repo=$(new_repo $'pub trait IntoDisk { type Bytes; }\npub struct Foo<T>(pub T);\nimpl IntoDisk for Foo<u32> { type Bytes = [u8; 40]; }')
+base=$(git -C "$repo" rev-parse HEAD)
+head=$(commit_lib "$repo" $'pub trait IntoDisk { type Bytes; }\npub struct Foo<T>(pub T);\nimpl IntoDisk for Foo<u32> { type Bytes = [u8; 48]; }' 'bump Bytes')
+out=$( cd "$repo" && "$ZIFF" --changelog "$base" "$head" 2>/dev/null )
+assert_contains "$out" "- \`impl IntoDisk for Foo<u32>\`:" "--changelog: assoc item grouped under impl header with Self generics"
+assert_contains "$out" "- \`Bytes\`" "--changelog: assoc type shown as a bare member under the impl"
+rm -rf "$repo"
+
 echo ""
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]

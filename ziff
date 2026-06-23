@@ -1003,6 +1003,38 @@ dump_per_crate_deps() { # $1=ref -> stdout TSV
     cat "$cache_file"
 }
 
+# Build the trait-impl map (see TRAIT_MAP_JQ) for the given crates at $ref, by
+# compiling each crate's rustdoc JSON once. Used only by --changelog to attribute
+# associated items to their `impl Trait for Self`. Needs a nightly toolchain;
+# emits nothing (silently) if absent or if rustdoc JSON fails for a crate, so the
+# changelog degrades to plain type grouping rather than erroring. Per-crate
+# results are cached on ref-SHA + script hash.
+dump_trait_map() { # $1=ref  $2..=crate names  -> stdout TSV: self member trait
+    local ref=$1; shift
+    local sha wt target json crate cache_file idx=0 total=$#
+    [ -z "${nightly_toolchain:-}" ] && return 0
+    sha=$(git rev-parse --verify "$ref" 2>/dev/null) || return 0
+    target="$CACHE_DIR/trait-target"; mkdir -p "$target" 2>/dev/null || true
+    wt=$(mktemp -d -p "$RUN_TMP")
+    git worktree add --detach --quiet "$wt" "$ref" 2>/dev/null || return 0
+    for crate in "$@"; do
+        idx=$((idx + 1))
+        cache_file="$CACHE_DIR/${sha}.${SCRIPT_HASH}.${crate}.traitmap.tsv"
+        if [ -f "$cache_file" ]; then cat "$cache_file"; continue; fi
+        progress "${DIM}--changelog: trait map [$idx/$total] $crate${RESET}"
+        if CARGO_TARGET_DIR="$target" cargo +"$nightly_toolchain" rustdoc -q \
+            --manifest-path "$wt/Cargo.toml" -p "$crate" --lib \
+            -- -Z unstable-options --output-format json >/dev/null 2>&1; then
+            json="$target/doc/${crate//-/_}.json"
+            if [ -f "$json" ]; then
+                jq -r "$TRAIT_MAP_JQ" "$json" 2>/dev/null | sort -u >"$cache_file" || : >"$cache_file"
+                cat "$cache_file"
+            fi
+        fi
+    done
+    git worktree remove --force "$wt" >/dev/null 2>&1 || true
+}
+
 base_dump=$(dump_workspace_deps "$baseline") || exit 1
 head_dump=$(dump_workspace_deps "$head_ref") || exit 1
 
@@ -1918,13 +1950,56 @@ END {
     }
 }'
 
+# jq filter over a crate's rustdoc JSON emitting one row per trait-impl
+# associated item, used to attribute changelog items to their `impl Trait for
+# Self`. Columns: <Self short name> <member> <Trait short name>. Only concrete
+# trait impls are kept (inherent impls have no trait; blanket impls over `&T`
+# etc. have no `for.resolved_path`). Reads the unstable rustdoc JSON shape
+# directly; a future nightly that changes it just yields zero rows.
+TRAIT_MAP_JQ='
+.index as $idx
+| [ $idx[] | select((.inner | type == "object") and (.inner | has("impl"))) ][]
+| .inner.impl as $im
+| select($im.trait != null)
+| select($im.for | type == "object" and has("resolved_path"))
+| ($im.trait.path) as $tr
+| ($im.for.resolved_path.path | split("::") | last) as $self_short
+| ($im.items[]? | $idx[tostring] | select(. != null) | .name // empty) as $m
+| [$self_short, $m, $tr] | @tsv
+'
+
 # ── changelog generation (--changelog) ─────────────────────────────────
 # Emits one diff section as librustzcash-style markdown bullets: items grouped
 # under their owning type (`- `module::Type`:` + indented members), bare types
 # inline, own-crate paths made crate-relative, foreign-type paths kept in full.
-# `group_key` mirrors GROUP_AWK; `qual_path` is the same path extraction WITHOUT
-# the leaf-drop (so it keeps the member name), or the verbatim `impl …` line.
+# Trait-impl associated items (methods, assoc types/consts) are instead grouped
+# under an `impl <Trait> for <Self>` header. The trait is recovered from the
+# crate rustdoc JSON (`traitfile`, built by dump_trait_map) because the unchanged
+# `impl` line is absent from a *changed* assoc item like `ValueBalance::Bytes`;
+# the Self generics are recovered from the signature line. Added/removed impls
+# carry the `impl … for …` line in the diff and become the group header directly.
+# `group_key` mirrors GROUP_AWK; `qual_path` keeps the member name (no leaf-drop).
 CHANGELOG_AWK='
+function last_seg(p,   a, k) { while (p ~ /<[^<>]*>/) gsub(/<[^<>]*>/, "", p); k = split(p, a, "::"); return a[k] }
+function shorten_inner_gen(p,   pre, ins, post) {
+    if (match(p, /<[^<>]*>/)) {
+        pre = substr(p, 1, RSTART - 1); ins = substr(p, RSTART, RLENGTH); post = substr(p, RSTART + RLENGTH)
+        gsub(/[A-Za-z_][A-Za-z0-9_]*::/, "", ins)
+        return pre ins post
+    }
+    return p
+}
+function self_generics(s, ts,   m) {
+    if (match(s, ts "<[^<>]*>")) { m = substr(s, RSTART, RLENGTH); sub("^" ts, "", m); gsub(/[A-Za-z_][A-Za-z0-9_]*::/, "", m); return m }
+    return ""
+}
+# Trait short name keeping its own generics (paths inside shortened to last seg),
+# e.g. core::convert::From<zebra_chain::orchard::Nullifier> -> From<Nullifier>.
+function trait_disp(tp,   gen) {
+    gen = ""
+    if (match(tp, /<[^<>]*>/)) { gen = substr(tp, RSTART, RLENGTH); gsub(/[A-Za-z_][A-Za-z0-9_]*::/, "", gen); tp = substr(tp, 1, RSTART - 1) }
+    return last_seg(tp) gen
+}
 function group_key(s,   p, isdecl) {
     isdecl = 0
     gsub(/^#\[[^]]*\] +/, "", s)
@@ -1967,25 +2042,56 @@ function member_disp(qp, gk) {
     if (index(qp, gk "::") == 1) return substr(qp, length(gk) + 3)
     return disp(qp)
 }
+# Impl-group key "impl <Trait> for <Self>" for item s, or "" if s is not a
+# trait-impl member/header. Sets G_ISHEADER=1 when s is the impl line itself.
+function impl_group(s, gk0, qp,   body, tp, sp, ts, mem, tr) {
+    G_ISHEADER = 0
+    if (qp ~ /^impl /) {
+        body = qp; sub(/^impl +/, "", body)
+        if (body !~ / for /) return ""
+        tp = body; sub(/ for .*/, "", tp)
+        sp = body; sub(/^.* for /, "", sp)
+        G_ISHEADER = 1
+        # Cluster on the bare trait name (so a separate `from`/`as_bytes` member
+        # joins this group) but remember the full `impl Trait<gen> for Self` line
+        # for display, so e.g. `impl From<Nullifier> for X` keeps its source type.
+        G_HDRTEXT = "impl " trait_disp(tp) " for " shorten_inner_gen(sp)
+        return "impl " last_seg(tp) " for " shorten_inner_gen(sp)
+    }
+    ts = last_seg(gk0); mem = last_seg(qp)
+    tr = traitmap[ts SUBSEP mem]
+    if (tr == "") return ""
+    return "impl " tr " for " disp(gk0) self_generics(s, ts)
+}
+BEGIN {
+    if (traitfile != "") while ((getline line < traitfile) > 0) {
+        nf = split(line, f, "\t"); if (nf >= 3) traitmap[f[1] SUBSEP f[2]] = f[3]
+    }
+}
 /^[[:space:]]*$/ { next }
 { buf[++n] = $0 }
 END {
     for (i = 1; i <= n; i++) {
         s = buf[i]
         if (mode == "changed") { if (s !~ /^  - /) continue; sub(/^  - /, "", s) }
-        gk = group_key(s); qp = qual_path(s)
-        if ((gk SUBSEP qp) in seenitem) continue   # cargo-public-api dupes some impls
-        seenitem[gk SUBSEP qp] = 1
+        gk0 = group_key(s); qp = qual_path(s)
+        if ((gk0 SUBSEP qp) in seenitem) continue   # cargo-public-api dupes some impls
+        seenitem[gk0 SUBSEP qp] = 1
+        ig = impl_group(s, gk0, qp)
+        if (ig != "") { gk = ig; isimpl[gk] = 1 } else { gk = gk0 }
         if (!(gk in seen)) { seen[gk] = 1; order[++norder] = gk }
-        members[gk, ++mcnt[gk]] = qp
+        if (ig != "" && G_ISHEADER) { hdrtext[gk] = G_HDRTEXT; continue }  # impl line: header only
+        if (ig != "") members[gk, ++mcnt[gk]] = last_seg(qp)       # impl member: leaf name
+        else members[gk, ++mcnt[gk]] = qp                          # type member: full path
     }
     for (o = 1; o <= norder; o++) {
         gk = order[o]
         nd = 0
-        for (k = 1; k <= mcnt[gk]; k++) if (members[gk, k] != gk) ndm[++nd] = members[gk, k]
-        if (nd == 0) { print "- `" disp(gk) "`"; delete ndm; continue }
-        print "- `" disp(gk) "`:"
-        for (k = 1; k <= nd; k++) print "  - `" member_disp(ndm[k], gk) "`"
+        for (k = 1; k <= mcnt[gk]; k++) if (isimpl[gk] || members[gk, k] != gk) ndm[++nd] = members[gk, k]
+        hdr = (gk in hdrtext) ? hdrtext[gk] : (isimpl[gk] ? gk : disp(gk))
+        if (nd == 0) { print "- `" hdr "`"; delete ndm; continue }
+        print "- `" hdr "`:"
+        for (k = 1; k <= nd; k++) print "  - `" (isimpl[gk] ? ndm[k] : member_disp(ndm[k], gk)) "`"
         delete ndm
     }
 }'
@@ -1993,10 +2099,10 @@ END {
 # Emit per-section changelog markdown for buffer $1 (kind $2, crate prefix $3).
 # Prints nothing when the buffer is empty.
 render_changelog() {
-    local buffer=$1 kind=$2 crate_prefix=$3 mode=plain
+    local buffer=$1 kind=$2 crate_prefix=$3 traitfile=${4:-} mode=plain
     [ "$kind" = changed ] && mode=changed
     [ -z "$buffer" ] && return
-    printf '%s' "$buffer" | awk -v mode="$mode" -v crate_prefix="$crate_prefix" "$CHANGELOG_AWK"
+    printf '%s' "$buffer" | awk -v mode="$mode" -v crate_prefix="$crate_prefix" -v traitfile="$traitfile" "$CHANGELOG_AWK"
 }
 
 # Render one diff section (kind = removed|added|changed). Per $group_mode:
@@ -2132,29 +2238,54 @@ if $changelog_mode; then
             }
         ' <(printf '%s\n' "$pc_base") <(printf '%s\n' "$pc_head"))
     fi
+
+    # Per-crate rustdoc trait map (at head), so trait-impl associated items group
+    # under `impl Trait for Self` instead of their bare Self type. Built only for
+    # crates that have API changes; degrades silently to plain grouping without a
+    # nightly toolchain or if rustdoc JSON fails.
+    declare -A trait_file=()
+    [ -z "${nightly_toolchain:-}" ] && nightly_toolchain=$(rustup toolchain list 2>/dev/null | grep -oE 'nightly[^ ]*' | head -n1 || true)
+    if [ -n "${nightly_toolchain:-}" ]; then
+        changed_crates=()
+        for i in "${!crate_names[@]}"; do
+            [ $(( ${crate_removed[$i]} + ${crate_changed[$i]} + ${crate_added[$i]} )) -gt 0 ] &&
+                changed_crates+=("${crate_names[$i]}")
+        done
+        if [ ${#changed_crates[@]} -gt 0 ]; then
+            progress_start
+            dump_trait_map "$head_sha" "${changed_crates[@]}" >/dev/null 2>/dev/null || true
+            progress_clear
+            for crate in "${changed_crates[@]}"; do
+                cf="$CACHE_DIR/${head_sha}.${SCRIPT_HASH}.${crate}.traitmap.tsv"
+                [ -s "$cf" ] && trait_file["$crate"]="$cf"
+            done
+        fi
+    fi
+
     {
         for i in "${!crate_names[@]}"; do
             name="${crate_names[$i]}"
             r="${crate_removed[$i]}" c="${crate_changed[$i]}" a="${crate_added[$i]}"
             dc="${dep_changed_md[$name]:-}" dr="${dep_removed_md[$name]:-}"
+            tf="${trait_file[$name]:-}"
             [ $((r + c + a)) -eq 0 ] && [ -z "$dc" ] && [ -z "$dr" ] && continue
             pfx="${name//-/_}"
             echo "## ${name}"
             echo ""
             if [ "$a" -gt 0 ]; then
                 echo "### Added"
-                render_changelog "${crate_added_lines[$i]}" added "$pfx"
+                render_changelog "${crate_added_lines[$i]}" added "$pfx" "$tf"
                 echo ""
             fi
             if [ "$c" -gt 0 ] || [ -n "$dc" ]; then
                 echo "### Changed"
                 [ -n "$dc" ] && printf '%s' "$dc"
-                [ "$c" -gt 0 ] && render_changelog "${crate_changed_lines[$i]}" changed "$pfx"
+                [ "$c" -gt 0 ] && render_changelog "${crate_changed_lines[$i]}" changed "$pfx" "$tf"
                 echo ""
             fi
             if [ "$r" -gt 0 ] || [ -n "$dr" ]; then
                 echo "### Removed"
-                [ "$r" -gt 0 ] && render_changelog "${crate_removed_lines[$i]}" removed "$pfx"
+                [ "$r" -gt 0 ] && render_changelog "${crate_removed_lines[$i]}" removed "$pfx" "$tf"
                 [ -n "$dr" ] && printf '%s' "$dr"
                 echo ""
             fi

@@ -64,9 +64,33 @@ ziff --fetch               # fetch the upstream main tip first, then diff agains
 ziff --with-lock           # include the transitive Cargo.lock diff
 ziff --with-values main    # also flag const/static value + doc changes
 ziff --json main           # machine-readable output for CI
+ziff --changelog main      # draft a librustzcash-style changelog (markdown)
 ```
 
 Run `ziff --help` for the full option and output reference.
+
+### `--changelog`
+
+`--changelog` drafts a [librustzcash](https://github.com/zcash/librustzcash)/Zebra-style
+changelog (markdown) instead of the diff: one `## <crate>` section per changed
+crate, with `### Added` / `### Changed` / `### Removed` lists.
+
+- API items are grouped under their owning type, with own-crate paths made
+  crate-relative (e.g. `error::TransactionError`) and foreign-type paths kept in
+  full.
+- Trait-impl associated items are grouped under an `impl <Trait> for <Self>`
+  header. The trait is recovered from the crate's rustdoc JSON (so even a
+  *changed* associated type like `ValueBalance::Bytes`, whose `impl` line is
+  unchanged and thus absent from the diff, is attributed correctly), and the
+  Self generics are recovered from the signature.
+- Dependency changes are folded into each crate's section: internal workspace
+  bumps (`` `zebra-chain` dependency bumped to `10.0.0`. ``) and external
+  migrations (`` Migrated to `zcash_primitives 0.27`. ``) under `### Changed`,
+  dropped deps under `### Removed`.
+
+It's a *draft* — review and curate before committing. Needs a `nightly`
+toolchain for the trait attribution (without one it falls back to plain
+type grouping).
 
 ### `--fetch`
 
@@ -81,7 +105,7 @@ tracking ref and warns with that ref's commit age.
 - Bash 4+ (associative arrays)
 - [`cargo-public-api`](https://github.com/cargo-public-api/cargo-public-api)
 - `jq`
-- a `nightly` toolchain — only for `--with-values`
+- a `nightly` toolchain — only for `--with-values` and `--changelog`
 
 ## Exit codes
 

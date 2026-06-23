@@ -421,6 +421,15 @@ out=$( cd "$repo" && "$ZIFF" --changelog "$base" "$head" 2>/dev/null )
 assert_contains "$out" "impl Hash for K" "--changelog: -ss surfaces auto-derived impls"
 rm -rf "$repo"
 
+# 6t) Several member-less impls on one type collapse to `impl {A, B, ...} for T`
+#     (lrz's many-traits-one-type form), e.g. a new type and its derives.
+repo=$(new_repo 'pub struct Foo;')
+base=$(git -C "$repo" rev-parse HEAD)
+head=$(commit_lib "$repo" $'pub struct Foo;\n#[derive(Clone, Debug)]\npub struct Bar(pub u8);' 'derive Clone, Debug on Bar')
+out=$( cd "$repo" && "$ZIFF" --changelog "$base" "$head" 2>/dev/null )
+assert_contains "$out" "impl {Clone, Debug} for Bar" "--changelog: derives on one type collapse to impl {..} for T"
+rm -rf "$repo"
+
 echo ""
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]

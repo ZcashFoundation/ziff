@@ -2164,11 +2164,9 @@ END {
                 hdr = (gk in hdrtext) ? hdrtext[gk] : gk
                 nkeep = 0                               # drop boilerplate trait methods (from, clone, fmt, ...)
                 for (k = 1; k <= nd; k++) if (!(ndm[k] in boilerplate)) keep[++nkeep] = ndm[k]
-                if (nkeep == 0) {                       # nothing meaningful left: member-less, group by trait
+                if (nkeep == 0) {                       # nothing meaningful left: member-less impl
                     sfx = hdr; sub(/^impl /, "", sfx); fp = index(sfx, " for ")
-                    tn = substr(sfx, 1, fp - 1); sn = substr(sfx, fp + 5)
-                    if (!(tn in tseen)) { tseen[tn] = 1; torder[++nt] = tn }
-                    tself[tn, ++tcnt[tn]] = sn
+                    mtrait[++nmli] = substr(sfx, 1, fp - 1); mself[nmli] = substr(sfx, fp + 5)
                     delete ndm; delete keep; continue
                 }
                 print "- `" hdr "`:"
@@ -2188,7 +2186,26 @@ END {
             }
             delete ndm
         }
-        # Member-less trait impls, grouped by trait across the types they cover.
+        # Member-less impls: collapse many-traits-on-one-type into
+        # `impl {A, B, ...} for T` (e.g. a new type and its derives); the leftover
+        # singletons group by trait across the types they cover.
+        for (k = 1; k <= nmli; k++) {
+            sf = mself[k]
+            if (!(sf in mss)) { mss[sf] = 1; msorder[++nms] = sf }
+            mst[sf, ++mstc[sf]] = mtrait[k]
+        }
+        for (mi = 1; mi <= nms; mi++) {
+            sf = msorder[mi]
+            if (mstc[sf] >= 2) {
+                bl = ""
+                for (k = 1; k <= mstc[sf]; k++) bl = bl (k > 1 ? ", " : "") mst[sf, k]
+                print "- `impl {" bl "} for " sf "`"
+            } else {
+                tr = mst[sf, 1]
+                if (!(tr in tseen)) { tseen[tr] = 1; torder[++nt] = tr }
+                tself[tr, ++tcnt[tr]] = sf
+            }
+        }
         for (t = 1; t <= nt; t++) {
             tn = torder[t]
             if (tcnt[tn] == 1) print "- `impl " tn " for " tself[tn, 1] "`"

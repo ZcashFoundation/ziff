@@ -329,6 +329,15 @@ case "$out" in
 esac
 rm -rf "$repo"
 
+# 6l) Auto-derived impls must surface (cargo-public-api runs at -ss, not -sss),
+#     so a newly-derived `impl Hash` is documented rather than silently dropped.
+repo=$(new_repo 'pub fn placeholder() {}')
+base=$(git -C "$repo" rev-parse HEAD)
+head=$(commit_lib "$repo" $'pub fn placeholder() {}\n#[derive(Hash)]\npub struct K(pub u8);' 'derive Hash')
+out=$( cd "$repo" && "$ZIFF" --changelog "$base" "$head" 2>/dev/null )
+assert_contains "$out" "impl Hash for K" "--changelog: -ss surfaces auto-derived impls"
+rm -rf "$repo"
+
 echo ""
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]

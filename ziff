@@ -1525,7 +1525,12 @@ for i in "${!all_crates[@]}"; do
     # `HEAD` resolves differently across worktrees (the snapshot worktree
     # has its own detached HEAD pointing at the synth commit, so passing
     # the literal string "HEAD" would diff snapshot-vs-snapshot).
-    if ! output=$(cd "$api_cwd" && cargo public-api "${feature_args[@]}" -p "$crate_name" -sss diff "$baseline_sha..$head_sha" 2>"$err_file"); then
+    #
+    # `-ss` (not `-sss`) omits blanket and auto-trait impls but *keeps*
+    # auto-derived ones, so a changelog-worthy `impl Hash for T` is not hidden.
+    # In a diff this only surfaces derives that actually changed, so the extra
+    # noise is bounded to added/removed types.
+    if ! output=$(cd "$api_cwd" && cargo public-api "${feature_args[@]}" -p "$crate_name" -ss diff "$baseline_sha..$head_sha" 2>"$err_file"); then
         # cargo-public-api failed outright (missing baseline, rustdoc
         # failure, etc.). Record and surface the error.
         error_crate_count=$((error_crate_count + 1))

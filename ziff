@@ -1805,7 +1805,9 @@ END {
                     print "T\t" substr(t, length(m) + 3) "\t" kind_of(t)
                     for (k = 1; k <= mcnt[t]; k++) {
                         disp = buf[members[t, k]]
-                        gsub(t "::", "", disp)
+                        # Strip the owning type prefix, tolerating a generic arg
+                        # list on it (e.g. `ValueBalance<NonNegative>::Bytes`).
+                        gsub(t "(<[^<>]*>)?::", "", disp)
                         gsub(m "::", "", disp)
                         print "J\t" disp
                     }

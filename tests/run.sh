@@ -172,6 +172,20 @@ nhdr=$(printf '%s\n' "$out" | grep -cE '^ +E +\(enum\)$')
 assert_eq "$nhdr" "1" "clustering: enum header appears exactly once (no duplicate)"
 rm -rf "$repo"
 
+# 6f) Elision tolerates generics on the owning type: a member of `Wrap<u32>`
+#     should be factored to a bare name, not `Wrap<u32>::get`.
+repo=$(new_repo 'pub fn placeholder() {}')
+base=$(git -C "$repo" rev-parse HEAD)
+head=$(commit_lib "$repo" $'pub fn placeholder() {}\npub struct Wrap<T>(pub T);\nimpl Wrap<u32> { pub fn get(&self) -> u32 { self.0 } }' 'add generic Wrap')
+out=$( cd "$repo" && "$ZIFF" "$base" "$head" 2>&1 )
+assert_contains "$out" "+ pub fn get(" "generics: type prefix with generic args is factored"
+if printf '%s\n' "$out" | grep -qF 'Wrap<u32>::get'; then
+    bad "generics: member should not keep the Wrap<u32>:: prefix"
+else
+    ok "generics: Wrap<u32>:: prefix factored from member"
+fi
+rm -rf "$repo"
+
 echo ""
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]

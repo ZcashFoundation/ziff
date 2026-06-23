@@ -1787,7 +1787,7 @@ function group_key(s,   p, isdecl) {
         if (s ~ /^(mod|struct|enum|trait|union) /) {
             sub(/^(mod|struct|enum|trait|union) +/, "", s); isdecl = 1
         } else {
-            sub(/^(async +fn|fn|const|static|type|use) +/, "", s)
+            sub(/^(const +|async +|unsafe +)*/, "", s); sub(/^(fn|static|type|use) +/, "", s)
         }
         p = s
     }
@@ -2013,7 +2013,9 @@ function group_key(s,   p, isdecl) {
         if (s ~ /^(mod|struct|enum|trait|union) /) {
             sub(/^(mod|struct|enum|trait|union) +/, "", s); isdecl = 1
         } else {
-            sub(/^(async +fn|fn|const|static|type|use) +/, "", s)
+            # Strip leading fn qualifiers (const/async/unsafe) then the item
+            # keyword, so `const fn Foo::new` keeps `Foo::new`, not just `fn`.
+            sub(/^(const +|async +|unsafe +)*/, "", s); sub(/^(fn|static|type|use) +/, "", s)
         }
         p = s
     }
@@ -2026,7 +2028,7 @@ function qual_path(s,   p) {
     gsub(/^#\[[^]]*\] +/, "", s)
     if (s ~ /^impl /) { if (crate_prefix != "") gsub(crate_prefix "::", "", s); return s }
     sub(/^pub +/, "", s)
-    sub(/^(async +fn|fn|const|static|type|use|mod|struct|enum|trait|union) +/, "", s)
+    sub(/^(const +|async +|unsafe +)*/, "", s); sub(/^(fn|static|type|use|mod|struct|enum|trait|union) +/, "", s)
     p = s
     while (p ~ /<[^<>]*>/) gsub(/<[^<>]*>/, "", p)
     sub(/[ (=].*/, "", p)

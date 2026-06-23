@@ -315,6 +315,20 @@ assert_contains "$out" "- \`impl IntoDisk for Foo<u32>\`:" "--changelog: assoc i
 assert_contains "$out" "- \`Bytes\`" "--changelog: assoc type shown as a bare member under the impl"
 rm -rf "$repo"
 
+# 6k) A `const fn` must keep its name, not collapse to a stray `fn` group (the
+#     keyword strip has to consume the `const`/`async`/`unsafe` qualifier *and*
+#     the `fn`).
+repo=$(new_repo 'pub fn placeholder() {}')
+base=$(git -C "$repo" rev-parse HEAD)
+head=$(commit_lib "$repo" $'pub fn placeholder() {}\npub const fn answer() -> u8 { 42 }' 'add const fn')
+out=$( cd "$repo" && "$ZIFF" --changelog "$base" "$head" 2>/dev/null )
+assert_contains "$out" "- \`answer\`" "--changelog: const fn keeps its name"
+case "$out" in
+*'- `fn`'*) bad "--changelog: const fn must not collapse to a stray 'fn' group" ;;
+*) ok "--changelog: no stray 'fn' group from const fn" ;;
+esac
+rm -rf "$repo"
+
 echo ""
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]

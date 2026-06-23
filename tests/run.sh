@@ -243,8 +243,7 @@ head=$(commit_lib "$repo" $'pub fn placeholder() {}\npub struct Widget;\nimpl Wi
 out=$( cd "$repo" && "$ZIFF" --changelog "$base" "$head" 2>/dev/null )
 assert_contains "$out" "## ziff_fixture" "--changelog: per-crate heading"
 assert_contains "$out" "### Added" "--changelog: Added section"
-assert_contains "$out" "- \`Widget\`:" "--changelog: type group header (crate-relative)"
-assert_contains "$out" "- \`new\`" "--changelog: member shown as a bare name"
+assert_contains "$out" "- \`Widget::{new, run}\`" "--changelog: type members brace-grouped on one line"
 rm -rf "$repo"
 
 # 6i) --changelog documents per-crate dependency changes: an internal workspace
@@ -321,6 +320,32 @@ head=$(commit_lib "$repo" 'pub fn f() -> u16 { 0 }' 'widen return type')
 out=$( cd "$repo" && "$ZIFF" --changelog "$base" "$head" 2>/dev/null )
 assert_contains "$out" "- \`fn f() -> u8\`" "--changelog: Changed shows the old signature"
 assert_contains "$out" "→ \`fn f() -> u16\`" "--changelog: Changed shows the new signature after an arrow"
+rm -rf "$repo"
+
+# 6n) An MSRV (rust-version) bump is documented under ### Changed.
+repo=$(mktemp -d)
+git -C "$repo" init -q; git -C "$repo" config user.email t@t; git -C "$repo" config user.name t
+printf '/target\n' >"$repo/.gitignore"
+printf '[package]\nname = "ziff_fixture"\nversion = "0.1.0"\nedition = "2021"\nrust-version = "1.70"\n' >"$repo/Cargo.toml"
+mkdir -p "$repo/src"; echo 'pub fn f() {}' >"$repo/src/lib.rs"
+( cd "$repo" && cargo generate-lockfile -q ) >/dev/null 2>&1
+git -C "$repo" add -A; git -C "$repo" commit -qm base
+base=$(git -C "$repo" rev-parse HEAD)
+printf '[package]\nname = "ziff_fixture"\nversion = "0.1.0"\nedition = "2021"\nrust-version = "1.75"\n' >"$repo/Cargo.toml"
+( cd "$repo" && cargo generate-lockfile -q ) >/dev/null 2>&1
+git -C "$repo" add -A; git -C "$repo" commit -qm head
+head=$(git -C "$repo" rev-parse HEAD)
+out=$( cd "$repo" && "$ZIFF" --changelog "$base" "$head" 2>/dev/null )
+assert_contains "$out" "- MSRV is now 1.75." "--changelog: MSRV bump documented under Changed"
+rm -rf "$repo"
+
+# 6o) A trait implemented on several types is grouped by trait, lrz-style:
+#     `impl Trait` for: + the types as sub-bullets.
+repo=$(new_repo $'pub trait Marker {}\npub struct A;\npub struct B;')
+base=$(git -C "$repo" rev-parse HEAD)
+head=$(commit_lib "$repo" $'pub trait Marker {}\npub struct A;\npub struct B;\nimpl Marker for A {}\nimpl Marker for B {}' 'impl Marker on A and B')
+out=$( cd "$repo" && "$ZIFF" --changelog "$base" "$head" 2>/dev/null )
+assert_contains "$out" "- \`impl Marker\` for:" "--changelog: a trait on multiple types is grouped by trait"
 rm -rf "$repo"
 
 # 6k) A `const fn` must keep its name, not collapse to a stray `fn` group (the

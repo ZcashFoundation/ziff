@@ -78,7 +78,8 @@ crate, with `### Added` / `### Changed` / `### Removed` lists.
 
 - Added/removed API items are grouped under their owning type, with own-crate
   paths made crate-relative (e.g. `error::TransactionError`) and foreign-type
-  paths kept in full.
+  paths kept in full. Several members of one type are brace-grouped onto a single
+  bullet, lrz-style: `` - `OutPoint::{NULL, new, read, write}` ``.
 - Changed items show the old → new signature, so the entry says *what* changed
   (e.g. a return type going from `Result<Self, E>` to `Self`) rather than just
   naming the item.
@@ -86,11 +87,13 @@ crate, with `### Added` / `### Changed` / `### Removed` lists.
   header. The trait is recovered from the crate's rustdoc JSON (so even a
   *changed* associated type like `ValueBalance::Bytes`, whose `impl` line is
   unchanged and thus absent from the diff, is attributed correctly), and the
-  Self generics are recovered from the signature.
-- Dependency changes are folded into each crate's section: internal workspace
-  bumps (`` `zebra-chain` dependency bumped to `10.0.0`. ``) and external
-  migrations (`` Migrated to `zcash_primitives 0.27`. ``) under `### Changed`,
-  dropped deps under `### Removed`.
+  Self generics are recovered from the signature. A trait implemented on several
+  types collapses to one `` `impl Trait` for: `` block listing the types.
+- Dependency changes are folded into each crate's section: an MSRV
+  (`rust-version`) bump and internal workspace bumps
+  (`` `zebra-chain` dependency bumped to `10.0.0`. ``) and external migrations
+  (`` Migrated to `zcash_primitives 0.27`. ``) under `### Changed`, dropped deps
+  under `### Removed`.
 
 It's a *draft* — review and curate before committing. Needs a `nightly`
 toolchain for the trait attribution (without one it falls back to plain

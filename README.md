@@ -87,8 +87,13 @@ crate, with `### Added` / `### Changed` / `### Removed` lists.
   header. The trait is recovered from the crate's rustdoc JSON (so even a
   *changed* associated type like `ValueBalance::Bytes`, whose `impl` line is
   unchanged and thus absent from the diff, is attributed correctly), and the
-  Self generics are recovered from the signature. A trait implemented on several
-  types collapses to one `` `impl Trait` for: `` block listing the types.
+  Self generics are recovered from the signature (kept to one module segment,
+  lifetimes dropped). A trait implemented on several types collapses to one
+  `` `impl Trait` for: `` block; conversely several traits on one type collapse to
+  `` `impl {Clone, Debug, ...} for T` ``. The trait's own method (`from`, `clone`,
+  …) isn't listed — the `impl` line implies it.
+- Pure machinery is dropped: proptest `Arbitrary` impls, `lazy_static!` wrappers
+  (`Deref`/`LazyStatic`/…), and compiler-internal markers (`StructuralPartialEq`).
 - Dependency changes are folded into each crate's section: an MSRV
   (`rust-version`) bump and internal workspace bumps
   (`` `zebra-chain` dependency bumped to `10.0.0`. ``) and external migrations

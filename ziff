@@ -2168,6 +2168,9 @@ END {
         # cluster (Deref/Pointable/Receiver/LazyStatic + assoc items) is macro
         # machinery, keyed by the wrapper Self type.
         for (i = 1; i <= n; i++) if (buf[i] ~ /^impl[ <].*LazyStatic.* for /) lazystatic[group_key(buf[i])] = 1
+        # A whole module added/removed: its contents are implied, so list just the
+        # module and drop everything underneath it.
+        for (i = 1; i <= n; i++) { ml = buf[i]; gsub(/^#\[[^]]*\] +/, "", ml); if (ml ~ /^pub mod /) { sub(/^pub mod +/, "", ml); addmod[ml] = 1 } }
         for (i = 1; i <= n; i++) {
             s = buf[i]
             if (s ~ /^impl[ <]/ && s !~ / for /) continue  # inherent impl block header, not an item
@@ -2175,6 +2178,9 @@ END {
             if (s ~ /^impl[ <].*Structural(Partial)?Eq.* for /) continue  # compiler-internal derive marker
             gk0 = group_key(s); qp = qual_path(s)
             if ((gk0 in lazystatic) && qp != gk0) continue  # lazy_static machinery (keep the type decl)
+            inmod = 0   # subsumed by an added/removed module (but keep the module decl itself)
+            for (mp in addmod) if (qp != mp && (gk0 == mp || index(gk0, mp "::") == 1)) { inmod = 1; break }
+            if (inmod) continue
             if ((gk0 SUBSEP qp) in seenitem) continue   # cargo-public-api dupes some impls
             seenitem[gk0 SUBSEP qp] = 1
             ig = impl_group(s, gk0, qp)

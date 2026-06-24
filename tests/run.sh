@@ -441,6 +441,20 @@ out=$( cd "$repo" && "$ZIFF" --changelog "$base" "$head" 2>/dev/null )
 assert_contains "$out" "impl {Clone, Debug} for Bar" "--changelog: derives on one type collapse to impl {..} for T"
 rm -rf "$repo"
 
+# 6w) A whole added module subsumes its contents: only the module is listed, not
+#     the types/fns inside it (but sibling modules are kept).
+repo=$(new_repo 'pub fn placeholder() {}')
+base=$(git -C "$repo" rev-parse HEAD)
+head=$(commit_lib "$repo" $'pub fn placeholder() {}\npub fn sibling() -> u8 { 0 }\npub mod m { pub struct Foo; pub fn g() -> u8 { 0 } }' 'add module m and a sibling fn')
+out=$( cd "$repo" && "$ZIFF" --changelog "$base" "$head" 2>/dev/null )
+assert_contains "$out" "- \`m\`" "--changelog: an added module is listed on its own"
+assert_contains "$out" "- \`sibling\`" "--changelog: items outside the module are unaffected"
+case "$out" in
+*Foo*|*'m::g'*) bad "--changelog: contents of an added module should be subsumed" ;;
+*) ok "--changelog: added module subsumes its contents" ;;
+esac
+rm -rf "$repo"
+
 echo ""
 echo "passed: $pass  failed: $fail"
 [ "$fail" -eq 0 ]

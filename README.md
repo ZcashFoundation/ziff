@@ -121,6 +121,24 @@ a no-op for tags and release commits (`ziff v4.2.0`) and only moves the baseline
 when the parent has genuinely advanced past your branch point. An explicit
 two-ref comparison (`ziff v4.1.0 v4.2.0`) is always taken literally.
 
+## Claude Code skill
+
+`skills/changelog/` bundles a [Claude Code](https://claude.com/claude-code) skill
+that drives the full "draft a changelog for a PR" workflow: it runs
+`ziff --changelog` against the PR's branch point and curates the draft into
+librustzcash/Zebra-style `CHANGELOG.md` entries (prose `### Changed`, periods only
+on prose bullets, `### Breaking Changes` for new variants on non-`#[non_exhaustive]`
+enums, merged into the existing `[Unreleased]` section).
+
+Install it for use in any repo by linking it into your personal skills dir:
+
+```sh
+mkdir -p ~/.claude/skills
+ln -sfn "$PWD/skills/changelog" ~/.claude/skills/changelog
+```
+
+Then ask Claude to "produce the changelog for PR #N" (or invoke `/changelog N`).
+
 ## Requirements
 
 - Bash 4+ (associative arrays)

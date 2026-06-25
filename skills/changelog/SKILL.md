@@ -70,9 +70,11 @@ its prereqs: `cargo-public-api`, `jq`, a nightly toolchain).
   skip anything already documented.
 - Add a plain-language line to the workspace `CHANGELOG.md` for user-facing
   features; skip it for experimental / feature-gated work.
+- **Leave the edits unstaged** — don't `git add` or commit them — so they show up
+  in `git diff` for the user to review and stage selectively.
 - Then show a `git diff --stat` of the touched changelogs and audit the result: no
   bare-identifier bullet has a trailing period, prose bullets do, every line ≤100
-  chars. The edits are in the working tree for the user to review (`git diff`).
+  chars.
 
 ## Notes
 - Library-crate changelogs follow librustzcash style (terse, code-pathed); the

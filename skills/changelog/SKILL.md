@@ -2,9 +2,10 @@
 name: changelog
 description: >-
   Produce librustzcash/Zebra-style CHANGELOG entries for the current branch (or a
-  given PR/branch) by running ziff, and write them into the repo's CHANGELOG.md
-  files. Use when the user asks to write/draft/produce a changelog for a branch or
-  PR, update CHANGELOG.md for a branch's changes, or turn a ziff diff into entries.
+  given PR/branch) by running ziff and writing them into the repo's CHANGELOG.md
+  files; or, with --check, verify the existing entries against ziff and report
+  discrepancies without writing. Use when the user asks to write/draft/produce or
+  check/verify a changelog for a branch or PR, or turn a ziff diff into entries.
 ---
 
 # Produce lrz-style changelogs with ziff
@@ -20,6 +21,8 @@ its prereqs: `cargo-public-api`, `jq`, a nightly toolchain).
   changelogs for whatever the working tree is on, diffed against its branch point
   with `main`.
 - An argument that is a **PR number/URL** or a **branch/ref** → use that instead.
+- **`--check`** (with any target) → verify mode: report discrepancies against ziff and
+  write nothing (see the `--check` section below). The fast pre-PR gate.
 
 ## Procedure
 
@@ -75,6 +78,29 @@ its prereqs: `cargo-public-api`, `jq`, a nightly toolchain).
 - Then show a `git diff --stat` of the touched changelogs and audit the result: no
   bare-identifier bullet has a trailing period, prose bullets do, every line ≤100
   chars.
+
+## `--check` mode — verify, don't write
+
+With `--check` (e.g. `/changelog --check`, optionally with a PR/branch arg), run the
+diff (steps 1–2) but **report discrepancies and write nothing** — the fast pre-PR gate
+that catches the "looks public but isn't" class of error a human can't eyeball:
+
+1. From ziff's output, collect the public-API items: the backtick'd identifiers under
+   each crate's `### Added` / `### Removed`, plus the old/new of `### Changed`.
+2. Collect the changelog entries **this branch adds** — *not* the whole `[Unreleased]`
+   section, which also holds other PRs' unreleased entries that ziff (diffing only this
+   branch) won't report. Take the added (`+`) bullets from
+   `git diff <branch-point>..HEAD -- '**/CHANGELOG.md' 'CHANGELOG.md'` (branch-point =
+   `git merge-base main HEAD`, the same baseline ziff used), keeping only the ones that
+   are a bare backtick'd identifier — ignore prose / behavioral bullets, since ziff only
+   sees API signatures and those legitimately differ.
+3. Report two lists and edit nothing:
+   - **Listed but not public** — branch-added identifier bullets ziff doesn't report.
+     Usually a path that isn't actually public (e.g. behind a `pub(crate)` module), or a
+     line that belongs in prose rather than the identifier list.
+   - **Public but undocumented** — items ziff reports that the branch didn't add.
+
+   Both lists empty ⇒ the changelog's API entries match the public surface.
 
 ## Notes
 - Library-crate changelogs follow librustzcash style (terse, code-pathed); the

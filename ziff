@@ -2303,8 +2303,23 @@ if $changelog_mode; then
     # "### Removed". Added deps are intentionally not emitted — Zebra/lrz
     # changelogs do not document them.
     declare -A dep_changed_md=() dep_removed_md=()
-    pc_base=$(dump_per_crate_deps "$baseline_sha" 2>/dev/null) || pc_base=""
-    pc_head=$(dump_per_crate_deps "$head_sha" 2>/dev/null) || pc_head=""
+    # A failed dep dump (broken worktree, out-of-sync lockfile, etc.) must not be
+    # silently treated as "no dependencies" — that turns every baseline dep into a
+    # bogus "Removed" line, and an empty head into a fully degenerate changelog.
+    # Abort loudly instead of emitting garbage.
+    pc_base=$(dump_per_crate_deps "$baseline_sha") || {
+        echo "${RED}error:${RESET} could not read per-crate dependencies at baseline ($baseline_sha)" >&2
+        exit 1
+    }
+    pc_head=$(dump_per_crate_deps "$head_sha") || {
+        echo "${RED}error:${RESET} could not read per-crate dependencies at head ($head_sha)" >&2
+        exit 1
+    }
+    if [ -z "$pc_base" ] || [ -z "$pc_head" ]; then
+        echo "${RED}error:${RESET} per-crate dependency dump was empty for one side" \
+            "(baseline=$baseline_sha, head=$head_sha); refusing to emit a degenerate diff" >&2
+        exit 1
+    fi
     if [ -n "$pc_base$pc_head" ]; then
         while IFS=$'\t' read -r tag cr md; do
             [ -z "$tag" ] && continue

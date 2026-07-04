@@ -679,6 +679,15 @@ if [ -n "$head_cache" ]; then
     else
         bad "corrupt api cache: cache was not overwritten with JSON"
     fi
+    printf '%s\n' '{}' >"$head_cache"
+    out=$( cd "$repo" && "$ZIFF" "$base" "$head" 2>&1 ); rc=$?
+    assert_eq "$rc" 1 "empty-object api cache: rebuild preserves verdict"
+    assert_contains "$out" "BREAKING" "empty-object api cache: breaking verdict retained"
+    if jq -e 'has("format_version") and has("root") and has("index")' "$head_cache" >/dev/null 2>&1; then
+        ok "empty-object api cache: overwritten with rustdoc JSON"
+    else
+        bad "empty-object api cache: cache was not overwritten with rustdoc JSON"
+    fi
 else
     bad "corrupt api cache: expected head cache file"
 fi

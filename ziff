@@ -717,7 +717,7 @@ cleanup_run_tmp() {
 }
 trap cleanup_run_tmp EXIT
 git worktree prune >/dev/null 2>&1 || true
-find "$CACHE_DIR" -type f -name '*.api.json' -mtime +14 -delete >/dev/null 2>&1 || true
+find "$CACHE_DIR" -maxdepth 1 -type f -name '*.api.json' -mtime +14 -delete >/dev/null 2>&1 || true
 
 # If we deferred head_ref resolution (worktree-snapshot mode), do it now that
 # RUN_TMP exists. The synthesized commit object is parented at HEAD and contains
@@ -1549,7 +1549,16 @@ public_api_command() {
     local crate=$1 stage=$2
     case "$stage" in
     baseline_build | head_build) printf 'cargo public-api %s -p %s -ss' "${feature_args[*]}" "$crate" ;;
-    *) printf 'cargo public-api %s -ss diff first.json second.json' "${feature_args[*]}" ;;
+    *)
+        local first_ref second_ref first_sha second_sha
+        first_ref=${PUBLIC_API_ERROR_REF%%..*}
+        second_ref=${PUBLIC_API_ERROR_REF#*..}
+        first_sha=${PUBLIC_API_ERROR_REF_SHA%%..*}
+        second_sha=${PUBLIC_API_ERROR_REF_SHA#*..}
+        printf 'run at %s (%s): cargo public-api %s -p %s -ss; run at %s (%s): cargo public-api %s -p %s -ss' \
+            "$first_ref" "$first_sha" "${feature_args[*]}" "$crate" \
+            "$second_ref" "$second_sha" "${feature_args[*]}" "$crate"
+        ;;
     esac
 }
 
@@ -1587,7 +1596,7 @@ api_json_cacheable() { # $1=ref-sha
 cached_api_json() { # $1=ref-sha  $2=crate  -> stdout path
     local cache_file
     cache_file=$(api_json_cache_file "$1" "$2")
-    if [ -s "$cache_file" ] && jq -e . "$cache_file" >/dev/null 2>&1; then
+    if [ -s "$cache_file" ] && jq -e 'has("format_version") and has("root") and has("index")' "$cache_file" >/dev/null 2>&1; then
         touch "$cache_file" 2>/dev/null || true
         printf '%s' "$cache_file"
         return 0

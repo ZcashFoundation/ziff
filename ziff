@@ -2476,16 +2476,16 @@ if $changelog_mode; then
     # Abort loudly instead of emitting garbage.
     pc_base=$(dump_per_crate_deps "$baseline_sha") || {
         echo "${RED}error:${RESET} could not read per-crate dependencies at baseline ($baseline_sha)" >&2
-        exit 1
+        exit "$EXIT_ANALYSIS"
     }
     pc_head=$(dump_per_crate_deps "$head_sha") || {
         echo "${RED}error:${RESET} could not read per-crate dependencies at head ($head_sha)" >&2
-        exit 1
+        exit "$EXIT_ANALYSIS"
     }
     if [ -z "$pc_base" ] || [ -z "$pc_head" ]; then
         echo "${RED}error:${RESET} per-crate dependency dump was empty for one side" \
             "(baseline=$baseline_sha, head=$head_sha); refusing to emit a degenerate diff" >&2
-        exit 1
+        exit "$EXIT_ANALYSIS"
     fi
     if [ -n "$pc_base$pc_head" ]; then
         while IFS=$'\t' read -r tag cr md; do

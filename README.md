@@ -195,7 +195,7 @@ two-ref comparison (`zc v4.1.0 v4.2.0`) is always taken literally.
 
 ## Claude Code skill
 
-`skills/changelog/` bundles a [Claude Code](https://claude.com/claude-code) skill
+`skills/zc/` bundles a [Claude Code](https://claude.com/claude-code) skill
 that drives the full "draft a changelog for a PR" workflow: it runs
 `zc --changelog` against the PR's branch point and curates the draft into
 [librustzcash](https://github.com/zcash/librustzcash)-style `CHANGELOG.md` entries
@@ -208,10 +208,10 @@ Install it for use in any repo by linking it into your personal skills dir:
 
 ```sh
 mkdir -p ~/.claude/skills
-ln -sfn "$PWD/skills/changelog" ~/.claude/skills/changelog
+ln -sfn "$PWD/skills/zc" ~/.claude/skills/zc
 ```
 
-Then ask Claude to "produce the changelog for PR #N" (or invoke `/changelog N`).
+Then ask Claude to "produce the changelog for PR #N" (or invoke `/zc N`).
 
 ## Requirements
 

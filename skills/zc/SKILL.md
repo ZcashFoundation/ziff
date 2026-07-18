@@ -1,5 +1,5 @@
 ---
-name: changelog
+name: zc
 description: >-
   Produce librustzcash-style CHANGELOG entries for the current branch (or a
   given PR/branch) by running zc and writing them into the repo's CHANGELOG.md
@@ -104,6 +104,34 @@ For a full draft-to-entries walkthrough, see [EXAMPLES.md](EXAMPLES.md).
 - **Leave the edits unstaged** so they show up in `git diff` for review.
 - Show a `git diff --stat` of the touched files and audit: no bare-identifier bullet
   has a trailing period, prose bullets do, every line is 100 chars or fewer.
+
+## Release changelogs (the release-plz PR)
+
+A release differs from a normal PR in two ways that break the default workflow, and both
+cause per-crate `` `x` dependency bumped to `y`. `` entries to be silently omitted:
+
+1. **The version bumps live in the release PR branch, not `main`.** release-plz writes the
+   per-crate `Cargo.toml`/`Cargo.lock` bumps into its `release-plz-*` branch. A default
+   `zc --changelog` diffs against `main`, sees **no** dependency-version changes, and so drops
+   every dependency-bump entry — leaving dependency-propagation crates undocumented.
+2. **The baseline is the previous release, not the branch point.** Diff from the last published
+   release, not `merge-base(main, HEAD)`.
+
+So for a release, run zc against the **release PR branch**, based on the previous release:
+
+```
+zc --changelog <previous-release-ref> <release-plz-branch-HEAD>
+```
+
+- Run it **after** any manual version overrides land on the branch. If you correct release-plz's
+  computed versions, zc must see the final numbers or it documents the wrong bumps.
+- zc's per-crate `### Changed` dependency-bump list is the **source of truth** — include all of
+  it. A run against `main` cannot produce it.
+- Write the entries into the **release PR branch's** `CHANGELOG.md` files (they merge to `main`
+  with the release). Do **not** open a separate `main` PR for them: a new `main` push makes
+  release-plz regenerate the release PR and discard any manual version overrides on it.
+- Skip dev-dependency-only bumps (stripped from published crates, so not consumer-visible), and
+  skip the dep list for a binary crate like `zebrad` (its changelog is operator-facing prose).
 
 ## `--check` mode: verify, do not write
 
